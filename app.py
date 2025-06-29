@@ -4,7 +4,7 @@ import os
 import json
 from dotenv import load_dotenv
 from flask import Flask, request, jsonify
-import google.generativeai as genai
+import openai
 import firebase_admin
 from firebase_admin import credentials, firestore
 import chromadb
@@ -15,13 +15,16 @@ import asyncio # For async operations if using FastAPI/async calls
 load_dotenv()
 
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
+OPENAI_API_KEY = os.getenv("OPENAI_API_KEY")
 HA_URL = os.getenv("HA_URL")
 HA_ACCESS_TOKEN = os.getenv("HA_ACCESS_TOKEN")
 FIREBASE_SERVICE_ACCOUNT_PATH = os.getenv("FIREBASE_SERVICE_ACCOUNT_PATH")
 
-if not all([GEMINI_API_KEY, HA_URL, HA_ACCESS_TOKEN, FIREBASE_SERVICE_ACCOUNT_PATH]):
+if not all([OPENAI_API_KEY, HA_URL, HA_ACCESS_TOKEN, FIREBASE_SERVICE_ACCOUNT_PATH]):
     print("Error: Missing one or more environment variables. Check your .env file.")
     exit(1)
+
+openai.api_key = OPENAI_API_KEY
 
 # --- 2. Initialize Firebase Admin SDK ---
 try:
@@ -36,13 +39,9 @@ except Exception as e:
 # --- 3. Initialize Flask App ---
 app = Flask(__name__)
 
-# --- 4. Initialize Gemini Model ---
-genai.configure(api_key=GEMINI_API_KEY)
-# We'll use gemini-pro for general chat and function calling
-# For native audio TTS, you'd call a separate model like 'gemini-2.5-flash-preview-native-audio-dialog'
-# directly via the API, which we'll abstract in a function.
-gemini_chat_model = genai.GenerativeModel('gemini-pro')
-gemini_embedding_model = genai.GenerativeModel('text-embedding-004') # For RAG embeddings
+# --- 4. Initialize OpenAI Model ---
+openai_chat_model = "gpt-3.5-turbo-1106"  # or gpt-4o if you have access
+openai_embedding_model = "text-embedding-3-small"
 
 # --- 5. Initialize ChromaDB (Local Vector Database for RAG) ---
 # Using PersistentClient so data is saved to disk
@@ -110,20 +109,14 @@ def control_home_assistant_device(entity_id: str, service: str, domain: str, dat
         return {"status": "error", "message": str(e), "details": response.text if response else "No response"}
 
 def add_personal_note(note_content: str):
-    """
-    Adds a new personal note or fact to Jarvis's memory.
-    This note will be embedded and stored in the local vector database (ChromaDB) for RAG.
-    Args:
-        note_content (str): The content of the personal note to be stored.
-    """
     print(f"DEBUG: Adding personal note: '{note_content}' to ChromaDB")
     try:
-        # Generate embedding for the note
-        embedding_response = gemini_embedding_model.embed_content(model="text-embedding-004", content=note_content)
-        embedding = embedding_response['embedding']
-
-        # Add to ChromaDB
-        # Using a simple UUID for ID in a real app, but for demo, a timestamp or hash is fine.
+        # Generate embedding for the note using OpenAI
+        embedding_response = openai.embeddings.create(
+            input=note_content,
+            model=openai_embedding_model
+        )
+        embedding = embedding_response.data[0].embedding
         note_id = f"note_{len(personal_memory_collection.get()['ids'])}_{os.urandom(4).hex()}"
         personal_memory_collection.add(
             documents=[note_content],
@@ -136,10 +129,7 @@ def add_personal_note(note_content: str):
         print(f"Error adding personal note: {e}")
         return {"status": "error", "message": str(e)}
 
-# --- Function Calling Tool Definitions for Gemini ---
-# These describe the functions to Gemini so it knows when and how to call them.
-# NOTE: google.generativeai does not have FunctionDeclaration or Schema classes. You must define your tools differently or use OpenAI-compatible schemas if supported.
-# For now, we'll define the tools as dictionaries (OpenAI style), which is compatible with many LLM APIs.
+# --- Function Calling Tool Definitions for OpenAI ---
 jarvis_tools = [
     {
         "type": "function",
@@ -220,29 +210,25 @@ def home():
     return "Jarvis Local Backend is running!"
 
 @app.route('/api/chat', methods=['POST'])
-async def chat_endpoint():
+def chat_endpoint():
     user_input = request.json.get('message')
     if not user_input:
         return jsonify({"error": "No message provided"}), 400
-
-    # For simplicity, we'll maintain a simple chat history in memory for this session.
-    # In a real app, you'd use a more robust session management.
-    # We'll use a global variable here, but for production, consider session storage or a DB.
     global chat_history
     if 'chat_history' not in globals():
         chat_history = []
-
     try:
         # --- RAG: Retrieve relevant personal memory ---
         retrieved_context = ""
         try:
-            query_embedding_response = gemini_embedding_model.embed_content(model="text-embedding-004", content=user_input)
-            query_embedding = query_embedding_response['embedding']
-            
-            # Query ChromaDB for top 2 most relevant notes
+            query_embedding_response = openai.embeddings.create(
+                input=user_input,
+                model=openai_embedding_model
+            )
+            query_embedding = query_embedding_response.data[0].embedding
             results = personal_memory_collection.query(
                 query_embeddings=[query_embedding],
-                n_results=2, # Adjust as needed
+                n_results=2,
                 include=['documents']
             )
             if results and results['documents'] and results['documents'][0]:
@@ -251,115 +237,34 @@ async def chat_endpoint():
         except Exception as e:
             print(f"WARNING: Error during ChromaDB RAG: {e}. Proceeding without additional context.")
             retrieved_context = ""
-
-
-        # Construct the prompt with retrieved context
         system_prompt = (
             "You are Jarvis, a helpful and highly personalized AI assistant. "
             "You are running on the user's local computer, giving you capabilities "
             "to interact with their local environment and smart home. "
             "Always be concise and helpful. Refer to the user directly when appropriate. "
             "If you need more information to perform a task, ask clarifying questions. "
-            "Current Date and Time: " + firestore.SERVER_TIMESTAMP.isoformat() + " (approx) "
+            f"Current Date and Time: {str(firestore.SERVER_TIMESTAMP)} (approx) "
             "Current Location: Pardes Hanna-Karkur, Haifa District, Israel."
             "You can use tools to get real-time information or perform actions."
         )
         if retrieved_context:
             system_prompt += f"\n\n--- Personal Context (from user's memory) ---\n{retrieved_context}\n---------------------------------------------"
-
-        # Add system prompt as a first message for context
-        if not chat_history or chat_history[0].role != "user":
-            chat_history.insert(0, {"role": "user", "parts": [{"text": system_prompt + "\nUser's initial query starts below."}]})
-
-        # Append current user message to history
-        chat_history.append({"role": "user", "parts": [{"text": user_input}]})
-
-        # Send to Gemini with function calling
-        response_stream = gemini_chat_model.generate_content(
-            chat_history,
+        if not chat_history or chat_history[0].get("role") != "user":
+            chat_history.insert(0, {"role": "user", "content": system_prompt + "\nUser's initial query starts below."})
+        chat_history.append({"role": "user", "content": user_input})
+        # OpenAI function calling
+        response = openai.chat.completions.create(
+            model=openai_chat_model,
+            messages=chat_history,
             tools=jarvis_tools,
-            stream=True
+            tool_choice="auto"
         )
-
-        full_response_text = ""
-        tool_calls = []
-
-        for chunk in response_stream:
-            # Check for text response
-            if chunk.candidates and chunk.candidates[0].content.parts:
-                for part in chunk.candidates[0].content.parts:
-                    if part.text:
-                        full_response_text += part.text
-                    # Check for tool calls
-                    if part.function_call:
-                        tool_calls.append(part.function_call)
-
-        print(f"DEBUG: Gemini Text Response: {full_response_text}")
-        print(f"DEBUG: Gemini Tool Calls: {tool_calls}")
-
-        # --- Handle Tool Calls ---
-        if tool_calls:
-            tool_outputs = []
-            for tool_call in tool_calls:
-                function_name = tool_call.name
-                function_args = {k: v for k, v in tool_call.args.items()} # Ensure args are dict
-                print(f"DEBUG: Executing tool: {function_name} with args: {function_args}")
-
-                if function_name in available_tools:
-                    # Execute the local Python function
-                    result = available_tools[function_name](**function_args)
-                    tool_outputs.append({
-                        "functionResponse": {
-                            "name": function_name,
-                            "response": result
-                        }
-                    })
-                    print(f"DEBUG: Tool '{function_name}' returned: {result}")
-                else:
-                    tool_outputs.append({
-                        "functionResponse": {
-                            "name": function_name,
-                            "response": {"error": f"Tool '{function_name}' not found."}
-                        }
-                    })
-
-            # Send tool outputs back to Gemini for final response generation
-            # Add Gemini's tool call response to history first
-            chat_history.append({"role": "model", "parts": [part for tc in tool_calls for part in [genai.types.Part.from_function_call(tc)] ]})
-            chat_history.append({"role": "tool", "parts": [part for to in tool_outputs for part in [genai.types.Part.from_function_response(**to['functionResponse'])] ]})
-
-
-            final_response_stream = gemini_chat_model.generate_content(
-                chat_history,
-                stream=True
-            )
-            full_response_text = ""
-            for chunk in final_response_stream:
-                if chunk.text:
-                    full_response_text += chunk.text
-            print(f"DEBUG: Gemini Final Response after tool execution: {full_response_text}")
-
-        # Append Jarvis's final text response to history
-        chat_history.append({"role": "model", "parts": [{"text": full_response_text}]})
-
-        # --- Generate TTS Audio (Optional - can be done on frontend too) ---
-        # For high-quality, consider calling Gemini's native audio model here.
-        # This is a more complex step involving streaming audio bytes,
-        # so for initial setup, we'll just send text.
-        # If you wanted to do this, you'd add:
-        # audio_response = gemini_chat_model.generate_content(
-        #    "tts for: " + full_response_text,
-        #    model='gemini-2.5-flash-preview-native-audio-dialog',
-        #    stream=False # Or true if you handle streaming audio
-        # )
-        # then return audio_response.audio or a base64 encoded string.
-
+        full_response_text = response.choices[0].message.content
+        chat_history.append({"role": "assistant", "content": full_response_text})
         return jsonify({"response": full_response_text})
-
     except Exception as e:
         print(f"An error occurred: {e}")
-        # Append error message to history to prevent breaking context on future turns
-        chat_history.append({"role": "model", "parts": [{"text": f"I'm sorry, but I encountered an error: {e}"}]})
+        chat_history.append({"role": "assistant", "content": f"I'm sorry, but I encountered an error: {e}"})
         return jsonify({"error": str(e)}), 500
 
 # --- Firestore Endpoints (Example for syncing preferences) ---
