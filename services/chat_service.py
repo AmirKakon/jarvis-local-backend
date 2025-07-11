@@ -1,9 +1,10 @@
 import openai
 import os
 from firebase_admin import firestore
+from config import system_prompt
 
 openai_chat_model = os.getenv("OPENAI_CHAT_MODEL", "gpt-3.5-turbo-0125")
-MAX_HISTORY_LENGTH = 30
+MAX_HISTORY_LENGTH = 3
 CHAT_HISTORY_DOC = "chat/history"
 
 # Placeholder for semantic search (to be implemented later)
@@ -31,11 +32,13 @@ def update_chat_history(history):
 
 def build_messages(user_input):
     chat_history = get_chat_history()
+    print(chat_history.__len__())
+    
     semantic_context = get_semantic_context(user_input)
-    system_prompt = "You are Jarvis, a helpful and highly personalized AI assistant."
+    prompt = system_prompt
     if semantic_context:
-        system_prompt += "\nRelevant info:\n" + "\n".join(f"- {c}" for c in semantic_context)
-    messages = [{"role": "system", "content": system_prompt}]
+        prompt += "\nRelevant info:\n" + "\n".join(f"- {c}" for c in semantic_context)
+    messages = [{"role": "system", "content": prompt}]
     messages += chat_history[-MAX_HISTORY_LENGTH:]
     messages.append({"role": "user", "content": user_input})
     return messages
