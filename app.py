@@ -214,65 +214,27 @@ def chat_endpoint():
     user_input = request.json.get('message')
     if not user_input:
         return jsonify({"error": "No message provided"}), 400
-    global chat_history
-    if 'chat_history' not in globals():
-        chat_history = []
     try:
-        # --- RAG: Retrieve relevant personal memory ---
-        retrieved_context = ""
-        try:
-            query_embedding_response = openai.embeddings.create(
-                input=user_input,
-                model=openai_embedding_model
-            )
-            query_embedding = query_embedding_response.data[0].embedding
-            results = personal_memory_collection.query(
-                query_embeddings=[query_embedding],
-                n_results=2,
-                include=['documents']
-            )
-            if results and results['documents'] and results['documents'][0]:
-                retrieved_context = "\n".join(results['documents'][0])
-                print(f"DEBUG: Retrieved context from personal memory:\n{retrieved_context}")
-        except Exception as e:
-            print(f"WARNING: Error during ChromaDB RAG: {e}. Proceeding without additional context.")
-            retrieved_context = ""
-        system_prompt = (
-            "You are Jarvis, a helpful and highly personalized AI assistant. "
-            "You are running on the user's local computer, giving you capabilities "
-            "to interact with their local environment and smart home. "
-            "Always be concise and helpful. Refer to the user directly when appropriate. "
-            "If you need more information to perform a task, ask clarifying questions. "
-            f"Current Date and Time: {str(firestore.SERVER_TIMESTAMP)} (approx) "
-            "Current Location: Pardes Hanna-Karkur, Haifa District, Israel."
-            "You can use tools to get real-time information or perform actions."
-        )
-        if retrieved_context:
-            system_prompt += f"\n\n--- Personal Context (from user's memory) ---\n{retrieved_context}\n---------------------------------------------"
-        if not chat_history or chat_history[0].get("role") != "user":
-            chat_history.insert(0, {"role": "user", "content": system_prompt + "\nUser's initial query starts below."})
-        chat_history.append({"role": "user", "content": user_input})
-        # OpenAI function calling
+        # Basic back-and-forth chat with the model, no history or RAG
         response = openai.chat.completions.create(
             model=openai_chat_model,
-            messages=chat_history,
-            tools=jarvis_tools,
-            tool_choice="auto"
+            messages=[
+                {"role": "system", "content": "You are Jarvis, a helpful and highly personalized AI assistant."},
+                {"role": "user", "content": user_input}
+            ]
         )
         full_response_text = response.choices[0].message.content
-        chat_history.append({"role": "assistant", "content": full_response_text})
         return jsonify({"response": full_response_text})
     except Exception as e:
         print(f"An error occurred: {e}")
-        chat_history.append({"role": "assistant", "content": f"I'm sorry, but I encountered an error: {e}"})
         return jsonify({"error": str(e)}), 500
-
+    
 # --- Firestore Endpoints (Example for syncing preferences) ---
 
-@app.route('/api/preferences/<user_id>', methods=['GET'])
-def get_preferences(user_id):
+@app.route('/api/preferences', methods=['GET'])
+def get_preferences():
     try:
-        doc_ref = db.collection('users').document(user_id).collection('preferences').document('general')
+        doc_ref = db.collection('preferences').document('general')
         doc = doc_ref.get()
         if doc.exists:
             return jsonify(doc.to_dict())
@@ -281,13 +243,29 @@ def get_preferences(user_id):
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
-@app.route('/api/preferences/<user_id>', methods=['POST'])
-def update_preferences(user_id):
+@app.route('/api/preferences', methods=['POST'])
+def update_preferences():
     preferences_data = request.json
     try:
-        doc_ref = db.collection('users').document(user_id).collection('preferences').document('general')
+        doc_ref = db.collection('preferences').document('general')
         doc_ref.set(preferences_data, merge=True)
         return jsonify({"status": "success", "message": "Preferences updated."})
+    except Exception as e:
+        return jsonify({"error": str(e)}), 500
+    
+@app.route('/api/memory', methods=['GET'])
+def get_memory():
+    try:
+        memory = []
+        # Fetch all documents
+        results = personal_memory_collection.get()
+        for doc, meta, doc_id in zip(results["documents"], results["metadatas"], results["ids"]):
+            memory.append({
+                "id": doc_id,
+                "content": doc,
+                "metadata": meta
+            })
+        return jsonify({"status": "success", "memory": memory})
     except Exception as e:
         return jsonify({"error": str(e)}), 500
 
