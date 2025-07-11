@@ -10,6 +10,7 @@ from firebase_admin import credentials, firestore
 import chromadb
 import requests # For Home Assistant API
 import asyncio # For async operations if using FastAPI/async calls
+from routes.chat import chat_bp
 
 # --- 1. Load Environment Variables ---
 load_dotenv()
@@ -38,6 +39,7 @@ except Exception as e:
 
 # --- 3. Initialize Flask App ---
 app = Flask(__name__)
+app.register_blueprint(chat_bp)
 
 # --- 4. Initialize OpenAI Model ---
 openai_chat_model = "gpt-3.5-turbo-1106"  # or gpt-4o if you have access
