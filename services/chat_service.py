@@ -2,7 +2,7 @@ import openai
 import os
 from firebase_admin import firestore
 
-openai_chat_model = os.getenv("OPENAI_CHAT_MODEL", "gpt-3.5-turbo-1106")
+openai_chat_model = os.getenv("OPENAI_CHAT_MODEL", "gpt-4.1-nano-2025-04-14")
 
 # Firestore document for chat history
 CHAT_HISTORY_DOC = "chat/history"
