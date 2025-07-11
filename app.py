@@ -214,16 +214,23 @@ def chat_endpoint():
     user_input = request.json.get('message')
     if not user_input:
         return jsonify({"error": "No message provided"}), 400
+    # Maintain simple in-memory chat history for context
+    global chat_history
+    if 'chat_history' not in globals():
+        chat_history = []
+    # Add system prompt only once at the start
+    if not chat_history or chat_history[0].get("role") != "system":
+        chat_history.insert(0, {"role": "system", "content": "You are Jarvis, a helpful and highly personalized AI assistant."})
+    # Add user message
+    chat_history.append({"role": "user", "content": user_input})
     try:
-        # Basic back-and-forth chat with the model, no history or RAG
         response = openai.chat.completions.create(
             model=openai_chat_model,
-            messages=[
-                {"role": "system", "content": "You are Jarvis, a helpful and highly personalized AI assistant."},
-                {"role": "user", "content": user_input}
-            ]
+            messages=chat_history
         )
         full_response_text = response.choices[0].message.content
+        # Add assistant response to history
+        chat_history.append({"role": "assistant", "content": full_response_text})
         return jsonify({"response": full_response_text})
     except Exception as e:
         print(f"An error occurred: {e}")
