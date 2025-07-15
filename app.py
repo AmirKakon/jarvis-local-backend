@@ -3,14 +3,12 @@
 import os
 import json
 from dotenv import load_dotenv
-from flask import Flask, request, jsonify
+from flask import Flask
 import openai
 import firebase_admin
-from firebase_admin import credentials, firestore
-import chromadb
-import requests # For Home Assistant API
-import asyncio # For async operations if using FastAPI/async calls
+from firebase_admin import credentials
 from routes.chat import chat_bp
+from routes.memory import memory_bp
 
 # --- 1. Load Environment Variables ---
 load_dotenv()
@@ -31,7 +29,6 @@ openai.api_key = OPENAI_API_KEY
 try:
     cred = credentials.Certificate(FIREBASE_SERVICE_ACCOUNT_PATH)
     firebase_admin.initialize_app(cred)
-    db = firestore.client()
     print("Firebase Admin SDK initialized successfully.")
 except Exception as e:
     print(f"Error initializing Firebase Admin SDK: {e}")
@@ -40,59 +37,12 @@ except Exception as e:
 # --- 3. Initialize Flask App ---
 app = Flask(__name__)
 app.register_blueprint(chat_bp)
-
-# --- 4. Initialize ChromaDB (Local Vector Database for RAG) ---
-try:
-    chroma_client = chromadb.PersistentClient(path="./data/chroma_db")
-    personal_memory_collection = chroma_client.get_or_create_collection(name="jarvis_personal_memory")
-    print("ChromaDB initialized successfully.")
-except Exception as e:
-    print(f"Error initializing ChromaDB: {e}")
-    exit(1)
+app.register_blueprint(memory_bp)
 
 # --- 5. Utility Endpoints ---
 @app.route('/')
 def home():
     return "Jarvis Local Backend is running!"
-
-# --- Firestore Endpoints (Preferences) ---
-@app.route('/api/preferences', methods=['GET'])
-def get_preferences():
-    try:
-        doc_ref = db.collection('preferences').document('general')
-        doc = doc_ref.get()
-        if doc.exists:
-            return jsonify(doc.to_dict())
-        else:
-            return jsonify({}), 404
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-@app.route('/api/preferences', methods=['POST'])
-def update_preferences():
-    preferences_data = request.json
-    try:
-        doc_ref = db.collection('preferences').document('general')
-        doc_ref.set(preferences_data, merge=True)
-        return jsonify({"status": "success", "message": "Preferences updated."})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
-
-# --- ChromaDB Memory Endpoint ---
-@app.route('/api/memory', methods=['GET'])
-def get_memory():
-    try:
-        memory = []
-        results = personal_memory_collection.get()
-        for doc, meta, doc_id in zip(results["documents"], results["metadatas"], results["ids"]):
-            memory.append({
-                "id": doc_id,
-                "content": doc,
-                "metadata": meta
-            })
-        return jsonify({"status": "success", "memory": memory})
-    except Exception as e:
-        return jsonify({"error": str(e)}), 500
 
 # --- Entry Point ---
 if __name__ == '__main__':
