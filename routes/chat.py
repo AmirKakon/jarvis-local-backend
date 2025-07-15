@@ -1,5 +1,5 @@
 from flask import Blueprint, request, jsonify
-from services.chat_service import get_chat_response, update_chat_history, get_chat_history
+from services.chat_service import chat_response, update_chat_history, get_chat_history
 
 chat_bp = Blueprint('chat', __name__)
 
@@ -11,7 +11,7 @@ def chat_endpoint():
     # Get current chat history
     chat_history = get_chat_history()
     try:
-        full_response_text = get_chat_response(user_input)
+        full_response_text = chat_response(user_input)
         # Update chat history with new user and assistant messages
         chat_history.append({"role": "user", "content": user_input})
         chat_history.append({"role": "assistant", "content": full_response_text})

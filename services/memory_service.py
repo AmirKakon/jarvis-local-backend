@@ -4,6 +4,7 @@ from typing import List, Optional
 from datetime import datetime
 import uuid
 from chromadb import Client as ChromaClient
+from mcp.openai_llm_extractor import extract_memories_from_text
 
 MEMORY_COLLECTION = "memory"
 CHROMA_COLLECTION = "memory_semantic"
@@ -91,8 +92,19 @@ def search_memories(query: str, top_k: int = 5):
     found_ids = results.get("ids", [[]])[0]
     return [get_memory(mem_id) for mem_id in found_ids if get_memory(mem_id)]
 
-# Placeholder for automatic memory addition via LLM-based detection
-
+# Automatic memory addition via LLM-based detection
 def auto_add_memory_from_chat(chat_text: str):
-    # TODO: Use LLM to detect important info and add to memory
-    pass
+    """
+    Uses MCP LLM extractor to extract important facts, notes, or events from chat text and adds them to memory.
+    Returns a list of added Memory objects.
+    """
+    memory_items = extract_memories_from_text(chat_text)
+    added_memories = []
+    for item in memory_items:
+        content = item.get("content")
+        type_ = item.get("type", "note")
+        tags = item.get("tags", [])
+        if content:
+            mem = add_memory(content, type_, tags)
+            added_memories.append(mem)
+    return added_memories

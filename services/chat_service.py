@@ -1,10 +1,9 @@
 import openai
-import os
 from firebase_admin import firestore
 from config import system_prompt
+from mcp.openai_chat_service import get_chat_response
 
-openai_chat_model = os.getenv("OPENAI_CHAT_MODEL", "gpt-3.5-turbo-0125")
-MAX_HISTORY_LENGTH = 4
+MAX_HISTORY_LENGTH = 8
 CHAT_HISTORY_DOC = "chat/history"
 
 # Placeholder for semantic search (to be implemented later)
@@ -18,7 +17,17 @@ def get_chat_history():
     doc_ref = db.document(CHAT_HISTORY_DOC)
     doc = doc_ref.get()
     if doc.exists:
-        return doc.to_dict().get("messages", [])
+        messages = doc.to_dict().get("messages", [])
+        # Ensure all messages are dicts with 'role' and 'content'
+        valid_messages = []
+        for m in messages:
+            if isinstance(m, dict) and "role" in m and "content" in m:
+                valid_messages.append(m)
+            elif isinstance(m, str):
+                # If message is a string, treat as user message
+                valid_messages.append({"role": "user", "content": m})
+            # Add more conversion logic if needed
+        return valid_messages
     return []
 
 def update_chat_history(history):
@@ -32,8 +41,6 @@ def update_chat_history(history):
 
 def build_messages(user_input):
     chat_history = get_chat_history()
-    print(chat_history.__len__())
-    
     semantic_context = get_semantic_context(user_input)
     prompt = system_prompt
     if semantic_context:
@@ -43,10 +50,7 @@ def build_messages(user_input):
     messages.append({"role": "user", "content": user_input})
     return messages
 
-def get_chat_response(user_input):
+def chat_response(user_input):
     messages = build_messages(user_input)
-    response = openai.chat.completions.create(
-        model=openai_chat_model,
-        messages=messages
-    )
-    return response.choices[0].message.content
+    response = get_chat_response(messages)
+    return response
