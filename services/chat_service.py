@@ -4,7 +4,7 @@ from firebase_admin import firestore
 from config import system_prompt
 
 openai_chat_model = os.getenv("OPENAI_CHAT_MODEL", "gpt-3.5-turbo-0125")
-MAX_HISTORY_LENGTH = 3
+MAX_HISTORY_LENGTH = 4
 CHAT_HISTORY_DOC = "chat/history"
 
 # Placeholder for semantic search (to be implemented later)
