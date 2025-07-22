@@ -72,20 +72,21 @@ def delete_memory(memory_id: str) -> bool:
 def sync_memories_to_chromadb():
     db = firestore.client()
     docs = db.collection(MEMORY_COLLECTION).stream()
-    collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION, persist_directory=CHROMA_DB_PATH)
+    collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION)
     for doc in docs:
         mem = Memory.from_dict(doc.to_dict())
-        # Use memory id as document id, content as text
+        # Convert tags list to comma-separated string for ChromaDB metadata
+        tags_str = ",".join(mem.tags) if isinstance(mem.tags, list) else str(mem.tags)
         collection.add(
             documents=[mem.content],
             ids=[mem.id],
-            metadatas=[{"type": mem.type, "tags": mem.tags, "created_at": mem.created_at.isoformat()}]
+            metadatas=[{"type": mem.type, "tags": tags_str, "created_at": mem.created_at.isoformat()}]
         )
 
 
 def search_memories(query: str, top_k: int = 5):
     sync_memories_to_chromadb()
-    collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION, persist_directory=CHROMA_DB_PATH)
+    collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION)
     results = collection.query(query_texts=[query], n_results=top_k)
     # Return Memory objects for found ids
     db = firestore.client()

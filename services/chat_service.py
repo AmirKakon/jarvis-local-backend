@@ -1,15 +1,27 @@
 from firebase_admin import firestore
 from config.prompts import system_prompt
 from mcp.gemini_chat_service import get_chat_response
+from services.memory_service import search_memories
 
 MAX_HISTORY_LENGTH = 8
 CHAT_HISTORY_DOC = "chat/history"
 
 # Placeholder for semantic search (to be implemented later)
 def get_semantic_context(user_input):
-    # TODO: Implement semantic search over features and memory
-    # Return a list of relevant context strings
-    return []
+    # Use ChromaDB semantic search to find relevant memory
+    # Limit to top 3 results, and total token count ~500 (approx 3-5 short facts/notes)
+    relevant_memories = search_memories(user_input, top_k=3)
+    context_snippets = []
+    token_budget = 500  # rough token budget for memory context
+    used_tokens = 0
+    for mem in relevant_memories:
+        snippet = f"[{mem.type}] {mem.content}"
+        snippet_tokens = len(snippet.split())  # crude token estimate
+        if used_tokens + snippet_tokens > token_budget:
+            break
+        context_snippets.append(snippet)
+        used_tokens += snippet_tokens
+    return context_snippets
 
 def get_chat_history():
     db = firestore.client()
