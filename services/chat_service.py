@@ -1,6 +1,6 @@
 from firebase_admin import firestore
-from prompts import system_prompt
-from mcp.openai_chat_service import get_chat_response
+from config.prompts import system_prompt
+from mcp.gemini_chat_service import get_chat_response
 
 MAX_HISTORY_LENGTH = 8
 CHAT_HISTORY_DOC = "chat/history"
@@ -51,5 +51,5 @@ def build_messages(user_input):
 
 def chat_response(user_input):
     messages = build_messages(user_input)
-    response = get_chat_response(messages)
+    response = get_chat_response(messages) 
     return response
