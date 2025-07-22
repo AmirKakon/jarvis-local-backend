@@ -1,6 +1,5 @@
-import openai
 from firebase_admin import firestore
-from config import system_prompt
+from prompts import system_prompt
 from mcp.openai_chat_service import get_chat_response
 
 MAX_HISTORY_LENGTH = 8
