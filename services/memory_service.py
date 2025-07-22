@@ -31,6 +31,14 @@ def add_memory(content: str, type_: str = "note", tags: Optional[List[str]] = No
         tags=tags or []
     )
     db.collection(MEMORY_COLLECTION).document(memory_id).set(memory.to_dict())
+    # Add to ChromaDB for semantic search
+    collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION)
+    tags_str = ",".join(memory.tags) if isinstance(memory.tags, list) else str(memory.tags)
+    collection.add(
+        documents=[memory.content],
+        ids=[memory.id],
+        metadatas=[{"type": memory.type, "tags": tags_str, "created_at": memory.created_at.isoformat()}]
+    )
     return memory
 
 def get_memory(memory_id: str) -> Optional[Memory]:
@@ -59,33 +67,29 @@ def update_memory(memory_id: str, content: Optional[str] = None, type_: Optional
         updates["tags"] = tags
     if updates:
         db.collection(MEMORY_COLLECTION).document(memory_id).update(updates)
+        # Also update in ChromaDB
+        mem = get_memory(memory_id)
+        if mem:
+            collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION)
+            tags_str = ",".join(mem.tags) if isinstance(mem.tags, list) else str(mem.tags)
+            # ChromaDB does not support update, so delete and re-add
+            collection.delete(ids=[memory_id])
+            collection.add(
+                documents=[mem.content],
+                ids=[mem.id],
+                metadatas=[{"type": mem.type, "tags": tags_str, "created_at": mem.created_at.isoformat()}]
+            )
     return get_memory(memory_id)
 
 def delete_memory(memory_id: str) -> bool:
     db = firestore.client()
     db.collection(MEMORY_COLLECTION).document(memory_id).delete()
+    # Also delete from ChromaDB
+    collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION)
+    collection.delete(ids=[memory_id])
     return True
 
-# Semantic search over memory using ChromaDB
-# Sync Firestore memory to ChromaDB before searching
-
-def sync_memories_to_chromadb():
-    db = firestore.client()
-    docs = db.collection(MEMORY_COLLECTION).stream()
-    collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION)
-    for doc in docs:
-        mem = Memory.from_dict(doc.to_dict())
-        # Convert tags list to comma-separated string for ChromaDB metadata
-        tags_str = ",".join(mem.tags) if isinstance(mem.tags, list) else str(mem.tags)
-        collection.add(
-            documents=[mem.content],
-            ids=[mem.id],
-            metadatas=[{"type": mem.type, "tags": tags_str, "created_at": mem.created_at.isoformat()}]
-        )
-
-
 def search_memories(query: str, top_k: int = 5):
-    sync_memories_to_chromadb()
     collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION)
     results = collection.query(query_texts=[query], n_results=top_k)
     # Return Memory objects for found ids
