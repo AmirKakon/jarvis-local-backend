@@ -1,15 +1,14 @@
+from services.chroma_service import add_to_chromadb, update_in_chromadb, delete_from_chromadb, search_chromadb, sync_chromadb_with_firestore
 from firebase_admin import firestore
 from models.memory import Memory
 from typing import List, Optional
 from datetime import datetime
 import uuid
-from chromadb import Client as ChromaClient
+
 from mcp.openai_llm_extractor import extract_memories_from_text
 
 MEMORY_COLLECTION = "memory"
-CHROMA_COLLECTION = "memory_semantic"
-CHROMA_DB_PATH = "data/chroma_db"
-chroma_client = ChromaClient()
+
 
 def memory_model_to_dict(memory: Memory) -> dict:
     return {
@@ -32,13 +31,7 @@ def add_memory(content: str, type_: str = "note", tags: Optional[List[str]] = No
     )
     db.collection(MEMORY_COLLECTION).document(memory_id).set(memory.to_dict())
     # Add to ChromaDB for semantic search
-    collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION)
-    tags_str = ",".join(memory.tags) if isinstance(memory.tags, list) else str(memory.tags)
-    collection.add(
-        documents=[memory.content],
-        ids=[memory.id],
-        metadatas=[{"type": memory.type, "tags": tags_str, "created_at": memory.created_at.isoformat()}]
-    )
+    add_to_chromadb(memory)
     return memory
 
 def get_memory(memory_id: str) -> Optional[Memory]:
@@ -70,32 +63,29 @@ def update_memory(memory_id: str, content: Optional[str] = None, type_: Optional
         # Also update in ChromaDB
         mem = get_memory(memory_id)
         if mem:
-            collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION)
-            tags_str = ",".join(mem.tags) if isinstance(mem.tags, list) else str(mem.tags)
-            # ChromaDB does not support update, so delete and re-add
-            collection.delete(ids=[memory_id])
-            collection.add(
-                documents=[mem.content],
-                ids=[mem.id],
-                metadatas=[{"type": mem.type, "tags": tags_str, "created_at": mem.created_at.isoformat()}]
-            )
+            update_in_chromadb(mem)
     return get_memory(memory_id)
 
 def delete_memory(memory_id: str) -> bool:
     db = firestore.client()
     db.collection(MEMORY_COLLECTION).document(memory_id).delete()
     # Also delete from ChromaDB
-    collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION)
-    collection.delete(ids=[memory_id])
+    delete_from_chromadb(memory_id)
     return True
 
 def search_memories(query: str, top_k: int = 5):
-    collection = chroma_client.get_or_create_collection(CHROMA_COLLECTION)
-    results = collection.query(query_texts=[query], n_results=top_k)
-    # Return Memory objects for found ids
+    found_ids = search_chromadb(query, top_k=top_k)
     db = firestore.client()
-    found_ids = results.get("ids", [[]])[0]
     return [get_memory(mem_id) for mem_id in found_ids if get_memory(mem_id)]
+
+def sync_chromadb_with_firestore_on_startup():
+    """
+    Loads all memories from Firestore and syncs them to ChromaDB. Call this on app startup.
+    """
+    db = firestore.client()
+    docs = db.collection(MEMORY_COLLECTION).stream()
+    memories = [Memory.from_dict(doc.to_dict()) for doc in docs]
+    sync_chromadb_with_firestore(memories)
 
 # Automatic memory addition via LLM-based detection
 def auto_add_memory_from_chat(chat_text: str):

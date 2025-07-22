@@ -9,6 +9,7 @@ import firebase_admin
 from firebase_admin import credentials
 from routes.chat import chat_bp
 from routes.memory import memory_bp
+from services.memory_service import sync_chromadb_with_firestore_on_startup
 
 # --- 1. Load Environment Variables ---
 load_dotenv()
@@ -34,10 +35,18 @@ except Exception as e:
     print(f"Error initializing Firebase Admin SDK: {e}")
     exit(1)
 
+
 # --- 3. Initialize Flask App ---
 app = Flask(__name__)
 app.register_blueprint(chat_bp)
 app.register_blueprint(memory_bp)
+
+# --- 4. Sync ChromaDB with Firestore on Startup ---
+try:
+    sync_chromadb_with_firestore_on_startup()
+    print("ChromaDB synced with Firestore memories.")
+except Exception as e:
+    print(f"Error syncing ChromaDB with Firestore: {e}")
 
 # --- 5. Utility Endpoints ---
 @app.route('/')
