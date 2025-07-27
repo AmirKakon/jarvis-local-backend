@@ -66,6 +66,8 @@ def build_messages(user_input):
 
 def chat_response(user_input):
     messages = build_messages(user_input)
-    response = get_chat_response(messages) 
-    auto_add_memory_from_chat(messages, response)
+    response = get_chat_response(messages)
+    # Pass semantic context to auto_add_memory_from_chat to avoid adding memories already present
+    semantic_context = get_semantic_context(user_input)
+    auto_add_memory_from_chat(response, semantic_context=semantic_context)
     return response

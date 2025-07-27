@@ -45,7 +45,7 @@ def list_memories(type_: Optional[str] = None) -> List[Memory]:
     db = firestore.client()
     query = db.collection(MEMORY_COLLECTION)
     if type_:
-        query = query.where("type", "==", type_)
+        query = query.where(filter=("type", "==", type_))
     docs = query.stream()
     return [Memory.from_dict(doc.to_dict()) for doc in docs]
 
@@ -77,6 +77,30 @@ def search_memories(query: str, top_k: int = 5):
     found_ids = search_chromadb(query, top_k=top_k)
     return [get_memory(mem_id) for mem_id in found_ids if get_memory(mem_id)]
 
+# Helper to check for duplicate memory (exact and semantic match)
+def is_duplicate_memory(content: str, type_: str = "note", similarity_threshold: float = 0.9) -> bool:
+    db = firestore.client()
+    # 1. Exact match in Firestore
+    query = db.collection(MEMORY_COLLECTION).where(filter=("content", "==", content)).where(filter=("type", "==", type_))
+    docs = list(query.stream())
+    if docs:
+        return True
+    # 2. Semantic similarity via ChromaDB
+    # Use search_chromadb to get top 1 similar memory
+    found_ids = search_chromadb(content, top_k=1, return_scores=True) if 'return_scores' in search_chromadb.__code__.co_varnames else search_chromadb(content, top_k=1)
+    if found_ids:
+        # If return_scores is supported, found_ids is a list of (id, score)
+        if isinstance(found_ids[0], (list, tuple)) and len(found_ids[0]) == 2:
+            mem_id, score = found_ids[0]
+            if score >= similarity_threshold:
+                return True
+        else:
+            # If only ids are returned, optionally fetch and compare content (fallback)
+            mem = get_memory(found_ids[0])
+            if mem and mem.content.strip().lower() == content.strip().lower():
+                return True
+    return False
+
 def sync_chromadb_with_firestore_on_startup():
     """
     Loads all memories from Firestore and syncs them to ChromaDB. Call this on app startup.
@@ -87,23 +111,34 @@ def sync_chromadb_with_firestore_on_startup():
     sync_chromadb_with_firestore(memories)
 
 # Automatic memory addition via LLM-based detection
-def auto_add_memory_from_chat(messages, response):
+def auto_add_memory_from_chat(response, semantic_context=None):
     """
     Uses MCP LLM extractor to extract important facts, notes, or events from the full chat context (messages + response) and adds them to memory.
+    Skips adding memories that are already present in the semantic context (by content and type).
     Returns a list of added Memory objects.
     """
-    # Combine messages and response for context
-    chat_context = "\n".join([
-        f"{m['role']}: {m['content']}" for m in messages if isinstance(m, dict) and 'role' in m and 'content' in m
-    ])
-    chat_context += f"\nassistant: {response}"
-    memory_items = extract_memories_from_text(chat_context)
+    # Format semantic context for the LLM prompt
+    existing_info = ""
+    if semantic_context:
+        existing_info = "\n".join(f"- {item}" for item in semantic_context)
+    prompt = (
+        "Below is a list of existing information. Do NOT extract or repeat any of it. "
+        "Only extract new facts, notes, preferences, or events from the response.\n"
+        "Existing Information (do not extract):\n"
+        f"{existing_info}\n"
+        "Response to extract from:\n"
+        f"{response}"
+    )
+    memory_items = extract_memories_from_text(prompt)
     added_memories = []
     for item in memory_items:
         content = item.get("content")
         type_ = item.get("type", "note")
         tags = item.get("tags", [])
         if content:
+            if is_duplicate_memory(content, type_):
+                print(f"Duplicate or similar memory detected, skipping: {content}")
+                continue
             mem = add_memory(content, type_, tags)
             added_memories.append(mem)
     if len(added_memories) > 0:

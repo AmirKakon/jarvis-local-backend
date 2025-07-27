@@ -14,7 +14,7 @@ def llm_extractor_prompt(chat_text: str) -> str:
         "You are an information extraction assistant. "
         "Never ask for input or clarification. "
         "If no facts are found, return an empty JSON array. "
-        "Only output the JSON array, nothing else.\n"
+        "Only output the JSON array, nothing else, with no text wrapping or markdown tags.\n"
         "Extract any important facts, notes, preferences, or events from the following chat text. "
         "Return a JSON array of objects with 'type', 'content', and optional 'tags'.\n"
         "Example chat text: 'I went to the gym today and set a new personal record. Running is a great sporty.'\n"
