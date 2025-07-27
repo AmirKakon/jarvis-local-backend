@@ -75,7 +75,6 @@ def delete_memory(memory_id: str) -> bool:
 
 def search_memories(query: str, top_k: int = 5):
     found_ids = search_chromadb(query, top_k=top_k)
-    db = firestore.client()
     return [get_memory(mem_id) for mem_id in found_ids if get_memory(mem_id)]
 
 def sync_chromadb_with_firestore_on_startup():
