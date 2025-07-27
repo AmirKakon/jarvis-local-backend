@@ -5,7 +5,7 @@ from typing import List, Optional
 from datetime import datetime
 import uuid
 
-from mcp.openai_llm_extractor import extract_memories_from_text
+from mcp.gemini_llm_extractor import extract_memories_from_text
 
 MEMORY_COLLECTION = "memory"
 
@@ -87,12 +87,17 @@ def sync_chromadb_with_firestore_on_startup():
     sync_chromadb_with_firestore(memories)
 
 # Automatic memory addition via LLM-based detection
-def auto_add_memory_from_chat(chat_text: str):
+def auto_add_memory_from_chat(messages, response):
     """
-    Uses MCP LLM extractor to extract important facts, notes, or events from chat text and adds them to memory.
+    Uses MCP LLM extractor to extract important facts, notes, or events from the full chat context (messages + response) and adds them to memory.
     Returns a list of added Memory objects.
     """
-    memory_items = extract_memories_from_text(chat_text)
+    # Combine messages and response for context
+    chat_context = "\n".join([
+        f"{m['role']}: {m['content']}" for m in messages if isinstance(m, dict) and 'role' in m and 'content' in m
+    ])
+    chat_context += f"\nassistant: {response}"
+    memory_items = extract_memories_from_text(chat_context)
     added_memories = []
     for item in memory_items:
         content = item.get("content")
@@ -101,4 +106,6 @@ def auto_add_memory_from_chat(chat_text: str):
         if content:
             mem = add_memory(content, type_, tags)
             added_memories.append(mem)
+    if len(added_memories) > 0:
+        print("Memories extracted from chat context.")
     return added_memories

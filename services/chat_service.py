@@ -2,7 +2,7 @@ import os
 from firebase_admin import firestore
 from config.prompts import system_prompt
 from mcp.gemini_chat_service import get_chat_response
-from services.memory_service import search_memories
+from services.memory_service import search_memories, auto_add_memory_from_chat
 
 MAX_HISTORY_LENGTH = os.getenv("MAX_CHAT_HISTORY_LENGTH", 8)
 CHAT_HISTORY_DOC = "chat/history"
@@ -67,4 +67,5 @@ def build_messages(user_input):
 def chat_response(user_input):
     messages = build_messages(user_input)
     response = get_chat_response(messages) 
+    auto_add_memory_from_chat(messages, response)
     return response
