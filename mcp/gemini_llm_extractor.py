@@ -1,7 +1,7 @@
 import os
 import google.generativeai as genai
-import json
 from config.prompts import llm_extractor_prompt
+from mcp.llm_utils import strip_code_block, is_meta_response, safe_json_loads
 
 gemini_chat_model = os.getenv("GEMINI_CHAT_MODEL", "gemini-2.5-flash")
 GEMINI_API_KEY = os.getenv("GEMINI_API_KEY")
@@ -20,24 +20,11 @@ def extract_memories_from_text(chat_text: str):
         if not result_text:
             print("Gemini LLM returned empty response for memory extraction.")
             return []
-        # Check for meta-responses (LLM asking for input or instructions)
-        meta_phrases = [
-            "please provide the chat text",
-            "i will then extract",
-            "provide the text",
-            "i can help you extract",
-            "let me know what to analyze"
-        ]
-        if any(phrase in result_text.lower() for phrase in meta_phrases):
+        if is_meta_response(result_text):
             print(f"Gemini LLM returned a meta-response instead of extracted memories: {result_text}")
             return []
-        try:
-            memory_items = json.loads(result_text)
-            return memory_items
-        except Exception as json_err:
-            print(f"Gemini LLM did not return valid JSON. Raw output: {result_text}")
-            print(f"JSON decode error: {json_err}")
-            return []
+        cleaned = strip_code_block(result_text)
+        return safe_json_loads(cleaned)
     except Exception as e:
         print(f"Error in gemini extract_memories_from_text: {e}")
         return []

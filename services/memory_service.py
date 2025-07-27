@@ -30,7 +30,6 @@ def add_memory(content: str, type_: str = "note", tags: Optional[List[str]] = No
         tags=tags or []
     )
     db.collection(MEMORY_COLLECTION).document(memory_id).set(memory.to_dict())
-    # Add to ChromaDB for semantic search
     add_to_chromadb(memory)
     return memory
 
@@ -45,7 +44,7 @@ def list_memories(type_: Optional[str] = None) -> List[Memory]:
     db = firestore.client()
     query = db.collection(MEMORY_COLLECTION)
     if type_:
-        query = query.where(filter=("type", "==", type_))
+        query = query.where("type", "==", type_)
     docs = query.stream()
     return [Memory.from_dict(doc.to_dict()) for doc in docs]
 
@@ -60,7 +59,6 @@ def update_memory(memory_id: str, content: Optional[str] = None, type_: Optional
         updates["tags"] = tags
     if updates:
         db.collection(MEMORY_COLLECTION).document(memory_id).update(updates)
-        # Also update in ChromaDB
         mem = get_memory(memory_id)
         if mem:
             update_in_chromadb(mem)
@@ -69,7 +67,6 @@ def update_memory(memory_id: str, content: Optional[str] = None, type_: Optional
 def delete_memory(memory_id: str) -> bool:
     db = firestore.client()
     db.collection(MEMORY_COLLECTION).document(memory_id).delete()
-    # Also delete from ChromaDB
     delete_from_chromadb(memory_id)
     return True
 
@@ -80,13 +77,10 @@ def search_memories(query: str, top_k: int = 5):
 # Helper to check for duplicate memory (exact and semantic match)
 def is_duplicate_memory(content: str, type_: str = "note", similarity_threshold: float = 0.9) -> bool:
     db = firestore.client()
-    # 1. Exact match in Firestore
-    query = db.collection(MEMORY_COLLECTION).where(filter=("content", "==", content)).where(filter=("type", "==", type_))
+    query = db.collection(MEMORY_COLLECTION).where("content", "==", content).where("type", "==", type_)
     docs = list(query.stream())
     if docs:
         return True
-    # 2. Semantic similarity via ChromaDB
-    # Use search_chromadb to get top 1 similar memory
     found_ids = search_chromadb(content, top_k=1, return_scores=True) if 'return_scores' in search_chromadb.__code__.co_varnames else search_chromadb(content, top_k=1)
     if found_ids:
         # If return_scores is supported, found_ids is a list of (id, score)
@@ -102,9 +96,7 @@ def is_duplicate_memory(content: str, type_: str = "note", similarity_threshold:
     return False
 
 def sync_chromadb_with_firestore_on_startup():
-    """
-    Loads all memories from Firestore and syncs them to ChromaDB. Call this on app startup.
-    """
+    """Loads all memories from Firestore and syncs them to ChromaDB. Call this on app startup."""
     db = firestore.client()
     docs = db.collection(MEMORY_COLLECTION).stream()
     memories = [Memory.from_dict(doc.to_dict()) for doc in docs]
@@ -113,14 +105,9 @@ def sync_chromadb_with_firestore_on_startup():
 # Automatic memory addition via LLM-based detection
 def auto_add_memory_from_chat(response, semantic_context=None):
     """
-    Uses MCP LLM extractor to extract important facts, notes, or events from the full chat context (messages + response) and adds them to memory.
-    Skips adding memories that are already present in the semantic context (by content and type).
-    Returns a list of added Memory objects.
+    Uses the LLM extractor to extract new facts, notes, preferences, or events from the response, avoiding any already present in the semantic context. Returns a list of added Memory objects.
     """
-    # Format semantic context for the LLM prompt
-    existing_info = ""
-    if semantic_context:
-        existing_info = "\n".join(f"- {item}" for item in semantic_context)
+    existing_info = "\n".join(f"- {item}" for item in semantic_context) if semantic_context else ""
     prompt = (
         "Below is a list of existing information. Do NOT extract or repeat any of it. "
         "Only extract new facts, notes, preferences, or events from the response.\n"
@@ -141,6 +128,6 @@ def auto_add_memory_from_chat(response, semantic_context=None):
                 continue
             mem = add_memory(content, type_, tags)
             added_memories.append(mem)
-    if len(added_memories) > 0:
+    if added_memories:
         print("Memories extracted from chat context.")
     return added_memories

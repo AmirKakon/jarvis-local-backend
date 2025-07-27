@@ -11,15 +11,13 @@ TOKEN_BUDGET = os.getenv("TOKEN_BUDGET", 500)
 TOP_K_MEMORIES = os.getenv("TOP_K_MEMORIES", 3)
 
 def get_semantic_context(user_input):
-    # Use ChromaDB semantic search to find relevant memory
-    # Limit to top 3 results, and total token count ~500 (approx 3-5 short facts/notes)
     relevant_memories = search_memories(user_input, top_k=TOP_K_MEMORIES)
     context_snippets = []
     token_budget = TOKEN_BUDGET
     used_tokens = 0
     for mem in relevant_memories:
         snippet = f"[{mem.type}] {mem.content}"
-        snippet_tokens = len(snippet.split())  # crude token estimate
+        snippet_tokens = len(snippet.split())
         if used_tokens + snippet_tokens > token_budget:
             break
         context_snippets.append(snippet)
@@ -32,15 +30,12 @@ def get_chat_history():
     doc = doc_ref.get()
     if doc.exists:
         messages = doc.to_dict().get("messages", [])
-        # Ensure all messages are dicts with 'role' and 'content'
         valid_messages = []
         for m in messages:
             if isinstance(m, dict) and "role" in m and "content" in m:
                 valid_messages.append(m)
             elif isinstance(m, str):
-                # If message is a string, treat as user message
                 valid_messages.append({"role": "user", "content": m})
-            # Add more conversion logic if needed
         return valid_messages
     return []
 
@@ -69,5 +64,6 @@ def chat_response(user_input):
     response = get_chat_response(messages)
     # Pass semantic context to auto_add_memory_from_chat to avoid adding memories already present
     semantic_context = get_semantic_context(user_input)
-    auto_add_memory_from_chat(response, semantic_context=semantic_context)
+    current_chat = "{user_input}\n{response}"
+    auto_add_memory_from_chat(current_chat, semantic_context=semantic_context)
     return response
